@@ -37,8 +37,10 @@ export async function chatCompletion(env, messages, maxTokens = 400, fetcher = f
 }
 
 export function parseJSON(text) {
-  const clean = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  return JSON.parse(clean);
+  if (typeof text !== 'string') throw new Error('AI_INVALID_JSON_INPUT');
+  const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+  if (!match) throw new Error('AI_NO_JSON_FOUND');
+  return JSON.parse(match[0]);
 }
 
 export async function rankProducts(env, candidates, goals, fetcher) {

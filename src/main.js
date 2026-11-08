@@ -14,8 +14,13 @@ import { api, supabase, session, initializeAuth, loadUserData, signIn, signUp, g
 
 const app = document.querySelector('#app');
 const overlay = document.querySelector('#overlay-root');
+const VALID_ROUTES = ['home', 'assistant', 'nutrition', 'insights', 'products', 'plan', 'saved', 'profile'];
+const currentRoute = () => {
+  const r = location.hash.slice(1).split('?')[0];
+  return VALID_ROUTES.includes(r) ? r : 'home';
+};
 const state = {
-  route: location.hash.slice(1).split('?')[0] || 'home', theme: document.documentElement.dataset.theme || 'light',
+  route: currentRoute(), theme: document.documentElement.dataset.theme || 'light',
   profile: null, products: [...previewProducts], articles: [...previewArticles], bookmarks: new Set(), foodLogs: [...previewFoodLogs],
   exercises: [], weights: [], supplements: [], water: 5, connected_accounts: [], messages: [], planDone: new Set(), search: '', category: 'Semua',
   articleCategory: 'Semua', chartPeriod: 'Minggu', chartMetric: 'Berat badan', notificationsRead: false, loading: false, remaining: null,
@@ -251,7 +256,7 @@ function profilePage() {
 }
 
 function go(route) { if (state.route === route) { shell(); window.scrollTo(0, 0); } else location.hash = route; }
-window.addEventListener('hashchange', () => { state.route = location.hash.slice(1).split('?')[0] || 'home'; shell(); window.scrollTo(0, 0); if (location.hash.includes('recovery=1')) recoveryModal(); });
+window.addEventListener('hashchange', () => { state.route = currentRoute(); shell(); window.scrollTo(0, 0); if (location.hash.includes('recovery=1')) recoveryModal(); });
 
 function openModal(content, { wide = false, title = 'Daryapedia', className = '' } = {}) {
   if (modalCleanup) modalCleanup();
