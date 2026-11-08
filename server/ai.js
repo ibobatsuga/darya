@@ -6,7 +6,7 @@ export async function sakelarCompletion(env, messages, maxTokens = 400, fetcher 
   if (base.protocol !== 'https:' || base.hostname !== 'api.sakelar.web.id') throw new Error('INVALID_AI_ENDPOINT');
   const response = await fetcher(`${base.href.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST', headers: { Authorization: `Bearer ${env.SAKELAR_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: env.AI_MODEL || 'gpt-6.1-terra', messages, max_tokens: maxTokens, stream: false }),
+    body: JSON.stringify({ model: env.AI_MODEL || 'gpt-6.1-terra', messages, max_tokens: maxTokens, temperature: 0.7, stream: false }),
     signal: AbortSignal.timeout(45000), redirect: 'error',
   });
   if (!response.ok) throw new Error(`AI_HTTP_${response.status}`);
@@ -20,7 +20,7 @@ export async function workersAICompletion(env, messages, maxTokens = 400) {
   // Cloudflare Workers AI binding (declared in wrangler.jsonc as "ai").
   // Same model family CalorAI uses. No external key needed.
   if (!env.AI || typeof env.AI.run !== 'function') throw new Error('AI_NOT_CONFIGURED');
-  const result = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', { messages, max_tokens: maxTokens, temperature: 0.3 });
+  const result = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', { messages, max_tokens: maxTokens, temperature: 0.7 });
   const text = result?.response;
   if (typeof text !== 'string') throw new Error('AI_INVALID_RESPONSE');
   return text;

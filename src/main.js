@@ -271,7 +271,7 @@ async function sendMessage(text) {
       const safety = safetyCheck(state.profile, text);
       state.messages.push({ role: 'assistant', preview: true, text: !state.profile ? 'Hai, aku Darya. Untuk mengenal tujuan dan batas keamananmu, lengkapi profil sehat melalui tombol di samping. Ini pratinjau pengalaman; konsultasi AI personal tersedia setelah layanan dihubungkan dan kamu masuk. Tidak ada rekomendasi produk yang diberikan dalam pratinjau.' : !safety.allowed ? safety.message : `Terima kasih sudah bercerita, ${name()}. Profil sehatmu sudah siap untuk pengalaman yang lebih personal. Di versi terhubung, aku akan membaca tujuanmu, memeriksa batas keamanan, dan hanya memakai katalog yang terverifikasi. Masuk ke akun untuk menggunakan konsultasi AI langsung.` });
     } else {
-      const data = await api('consult', { method: 'POST', body: { message: String(text).trim() } });
+      const data = await api('consult', { method: 'POST', body: { message: String(text).trim(), history: state.messages.slice(-6).map(m => ({ role: m.role, text: m.text })) } });
       state.messages.push({ role: 'assistant', text: data.message, products: data.products }); state.remaining = data.remaining;
     }
   } catch (err) { state.messages.push({ role: 'assistant', text: err.message }); }

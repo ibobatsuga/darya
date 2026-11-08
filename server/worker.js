@@ -58,17 +58,29 @@ function consultSystemPrompt(profile, selected) {
     `Tujuan: ${profile.goals.join(', ')}${profile.targetWeight ? `, target berat: ${profile.targetWeight} kg` : ''}`,
   ].filter(Boolean).join('. ');
   const productLine = selected.length
-    ? `Produk terverifikasi yang cocok (hanya produk ini yang boleh kamu sebut namanya, dan hanya dengan data katalog di bawah — jangan tambah klaim apa pun):\n${selected.map(p => `- ${p.name}: manfaat: ${p.benefits || '-'}. Komposisi: ${p.composition || '-'}. Dosis: ${p.dosage || '-'}. Peringatan: ${p.warnings || '-'}.`).join('\n')}`
-    : 'Belum ada produk terverifikasi yang cocok untuk tujuan pengguna — jangan merekomendasikan produk apa pun, dan katakan dengan jelas bahwa belum ada produk yang sesuai.';
-  return `Kamu Darya, konsultan kesehatan dan nutrisi yang ramah, empatik, dan praktis. Jawab dalam Bahasa Indonesia.\n\nProfil pengguna: ${profileLine}\n\n${productLine}\n\nAturan wajib:\n- Maksimal sekitar 120 kata, lalu akhiri dengan 1 pertanyaan lanjutan.\n- Beri 1 tips praktis yang bisa dilakukan hari ini, terkait tujuan dan profil pengguna.\n- Jangan mendiagnosis penyakit, jangan memberi angka dosis di luar data katalog produk di atas, jangan merekomendasikan obat resep, jangan menyebut nama produk selain yang tercantum di atas, jangan menjanjikan kesembuhan.`;
+    ? `Produk terverifikasi yang boleh kamu sebut namanya kalau memang relevan dengan yang sedang dibahas (hanya produk ini, dan hanya dengan data katalog di bawah — jangan tambah klaim apa pun):\n${selected.map(p => `- ${p.name}: manfaat: ${p.benefits || '-'}. Komposisi: ${p.composition || '-'}. Dosis: ${p.dosage || '-'}. Peringatan: ${p.warnings || '-'}.`).join('\n')}`
+    : 'Belum ada produk terverifikasi yang cocok untuk tujuan pengguna — jangan merekomendasikan produk apa pun.';
+  return `Kamu Darya, konsultan kesehatan dan nutrisi yang enak diajak ngobrol. Jawab dalam Bahasa Indonesia yang hangat dan sehari-hari, seperti teman yang peduli — bukan seperti formulir atau brosur.\n\nProfil pengguna (untuk konteks saja, jangan diulang-ulang ke pengguna): ${profileLine}\n\n${productLine}\n\nCara kamu ngobrol:\n- Dengarkan dulu. Pahami dulu apa yang sebenarnya dirasakan atau ditanyakan pengguna sebelum memberi saran.\n- Jangan buru-buru mengarahkan ke target atau tujuan di profil. Pengguna kadang hanya ingin curhat atau bertanya soal kesehatan — layani dulu obrolannya.\n- Produk hanya disebut kalau memang nyambung dengan yang sedang dibahas, atau kalau pengguna bertanya soal produk atau suplemen. Kalau menyebut produk, tawarkan dengan lembut sebagai salah satu opsi, bukan dorongan untuk membeli.\n- Boleh menjawab sampai sekitar 200 kata kalau memang perlu penjelasan, tapi tetap ringkas dan enak dibaca, dengan paragraf pendek.\n- Pertanyaan lanjutan dan tips hanya kalau memang dibutuhkan — tidak harus ada di setiap jawaban. Boleh juga sekadar merespons dan membiarkan pengguna melanjutkan.\n- Kalau pengguna sedang capek, khawatir, atau bingung, akui dulu perasaannya sebelum memberi saran.\n\nAturan wajib:\n- Jangan mendiagnosis penyakit, jangan memberi angka dosis di luar data katalog produk di atas, jangan merekomendasikan obat resep, jangan menyebut nama produk selain yang tercantum di atas, jangan menjanjikan kesembuhan.`;
 }
 
-async function generateConsultReply(env, profile, userMessage, selected) {
+function cleanHistory(history) {
+  // Only the last 6 turns, roles and plain text only — the model needs
+  // conversation context so it can chat instead of restarting every turn.
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string')
+    .map(m => ({ role: m.role, content: m.text.trim().slice(0, 1000) }))
+    .filter(m => m.content)
+    .slice(-6);
+}
+
+async function generateConsultReply(env, profile, userMessage, selected, history = []) {
   const reply = await chatCompletion(env, [
     { role: 'system', content: consultSystemPrompt(profile, selected) },
+    ...cleanHistory(history),
     { role: 'user', content: userMessage },
-  ], 400);
-  return reply.trim().slice(0, 1500);
+  ], 600);
+  return reply.trim().slice(0, 2000);
 }
 
 async function consult(client, user, env, body) {
@@ -81,8 +93,9 @@ async function consult(client, user, env, body) {
   }
   const products = ensure(await client.from('products').select('*').eq('verified', true));
   const candidates = eligibleProducts(products, record.data, body.message);
+  const history = cleanHistory(body.history);
   const admin = adminClient(env);
-  const fingerprint = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ profile: record.data, message: body.message.toLowerCase().trim(), candidates: candidates.map(p => [p.id, p.updated_at]) })));
+  const fingerprint = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ profile: record.data, message: body.message.toLowerCase().trim(), history: history.map(h => [h.role, h.content]), candidates: candidates.map(p => [p.id, p.updated_at]) })));
   const cacheKey = [...new Uint8Array(fingerprint)].map(b => b.toString(16).padStart(2, '0')).join('');
   const cache = ensure(await client.from('consultations').select('response').eq('cache_key', cacheKey).gte('created_at', new Date(Date.now() - 3600000).toISOString()).order('created_at', { ascending: false }).limit(1));
   if (cache.length) return json(cache[0].response);
@@ -96,7 +109,7 @@ async function consult(client, user, env, body) {
     try { selected = await rankProducts(env, candidates, record.data.goals); } catch { fail(503, 'Darya sedang beristirahat sebentar. Coba kembali nanti; tidak ada rekomendasi baru yang dibuat.'); }
   }
   let reply;
-  try { reply = await generateConsultReply(env, record.data, body.message, selected); } catch { fail(503, 'Darya sedang beristirahat sebentar. Coba kembali nanti; tidak ada rekomendasi baru yang dibuat.'); }
+  try { reply = await generateConsultReply(env, record.data, body.message, selected, history); } catch { fail(503, 'Darya sedang beristirahat sebentar. Coba kembali nanti; tidak ada rekomendasi baru yang dibuat.'); }
   const result = { message: `${reply}\n\n${DISCLAIMER}`, products: selected, remaining };
   const consultation = ensure(await client.from('consultations').insert({ user_id: user.id, summary: record.data.goals.join(', '), cache_key: cacheKey, response: result }).select('id').single());
   if (selected.length) ensure(await client.from('recommendations').insert(selected.map(p => ({ user_id: user.id, consultation_id: consultation.id, product_id: p.id, reason: p.reason }))));
