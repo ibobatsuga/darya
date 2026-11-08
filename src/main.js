@@ -17,7 +17,7 @@ const overlay = document.querySelector('#overlay-root');
 const state = {
   route: location.hash.slice(1).split('?')[0] || 'home', theme: document.documentElement.dataset.theme || 'light',
   profile: null, products: [...previewProducts], articles: [...previewArticles], bookmarks: new Set(), foodLogs: [...previewFoodLogs],
-  exercises: [], weights: [], supplements: [], water: 5, messages: [], planDone: new Set(), search: '', category: 'Semua',
+  exercises: [], weights: [], supplements: [], water: 5, connected_accounts: [], messages: [], planDone: new Set(), search: '', category: 'Semua',
   articleCategory: 'Semua', chartPeriod: 'Minggu', chartMetric: 'Berat badan', notificationsRead: false, loading: false, remaining: null,
 };
 let modalFocus = null;
@@ -68,6 +68,7 @@ function shell() {
   <nav class="mobile-nav" aria-label="Navigasi mobile"><a href="#home" class="${state.route === 'home' ? 'active' : ''}">${icon('house')}<span>Beranda</span></a><a href="#insights" class="${state.route === 'insights' ? 'active' : ''}">${icon('chart-no-axes-combined')}<span>Insight</span></a><button class="quick-add" data-action="quick-add" aria-label="Catat aktivitas">${icon('plus', '', 26)}</button><a href="#assistant" class="${state.route === 'assistant' ? 'active' : ''}">${icon('bot')}<span>Darya AI</span></a><a href="#profile" class="${state.route === 'profile' ? 'active' : ''}">${icon('user-round')}<span>Profil</span></a></nav>`;
   hydrateIcons();
   bindPageInputs();
+  handleSocialCallback();
 }
 
 function renderPage() {
@@ -150,17 +151,52 @@ function nutritionPage() {
   <section class="card supplement-summary"><div class="rail-title"><h2>Suplemen harian</h2>${icon('pill', 'green-text', 21)}</div><p class="muted small">Catat sesuai petunjuk pada kemasan.</p>${state.supplements.length ? state.supplements.map(s => `<div class="supplement-log">${icon('circle-check', 'green-text', 18)}<span>${esc(s.name)}<small>${esc(s.time)}</small></span></div>`).join('') : '<div class="mini-empty">Belum ada catatan suplemen hari ini.</div>'}<button class="button secondary full" data-action="supplement">${icon('plus', '', 16)} Catat suplemen</button></section></aside></div>`;
 }
 
+function pastDayKeys(n) {
+  const [y, m, d] = localDay().split('-').map(Number);
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) out.push(new Date(Date.UTC(y, m - 1, d - i)).toISOString().slice(0, 10));
+  return out;
+}
+function chartPoints() {
+  if (isPreview()) return { points: [], unit: '', note: 'Masuk untuk melihat tren dari catatanmu.' };
+  const days = state.chartPeriod === 'Minggu' ? 7 : 30;
+  const keys = pastDayKeys(days);
+  const today = localDay();
+  const labelFor = key => {
+    const dt = new Date(`${key}T00:00:00+07:00`);
+    return state.chartPeriod === 'Minggu'
+      ? new Intl.DateTimeFormat('id-ID', { weekday: 'short', timeZone: 'Asia/Jakarta' }).format(dt)
+      : new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' }).format(dt);
+  };
+  if (state.chartMetric === 'Berat badan') {
+    const byDay = new Map();
+    for (const w of state.weights) byDay.set(w.date, Number(w.weight));
+    const points = keys.filter(k => byDay.has(k)).map(k => ({ label: labelFor(k), value: byDay.get(k) }));
+    return { points, unit: 'kg', note: points.length ? `Dari ${state.weights.length} catatan berat` : '' };
+  }
+  if (state.chartMetric === 'Kalori') {
+    const total = state.foodLogs.reduce((s, f) => s + Number(f.calories || 0), 0);
+    return { points: total > 0 ? [{ label: labelFor(today), value: total }] : [], unit: 'kkal', note: 'Catatan kalori hanya tersedia untuk hari ini' };
+  }
+  const minutes = state.exercises.reduce((s, e) => s + Number(e.minutes || 0), 0);
+  return { points: minutes > 0 ? [{ label: labelFor(today), value: minutes }] : [], unit: 'menit', note: 'Catatan aktivitas hanya tersedia untuk hari ini' };
+}
 function chartSVG() {
-  const period = state.chartPeriod; const metric = state.chartMetric;
-  const values = metric === 'Berat badan' ? (period === 'Minggu' ? [67, 66.7, 66.8, 66.2, 66.3, 65.7, 65.3] : [68, 67.5, 67.8, 67, 66.8, 66.5, 65.3]) : metric === 'Kalori' ? [1280, 1650, 1520, 1840, 1600, 1930, 1700] : [20, 35, 26, 40, 22, 46, 32];
+  const { points } = chartPoints();
+  if (!points.length) return '';
+  const metric = state.chartMetric;
+  const values = points.map(p => p.value);
   const max = Math.max(...values), min = Math.min(...values); const span = max - min || 1;
-  const coords = values.map((v, i) => `${50 + i * 100},${205 - (v - min) / span * 140}`).join(' ');
-  return `<svg class="main-chart" viewBox="0 0 710 275" role="img" aria-label="${esc(metric)} ${esc(period)}: data ${isPreview() ? 'ilustrasi' : 'contoh grafik'}"><defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2463eb" stop-opacity=".18"/><stop offset="1" stop-color="#2463eb" stop-opacity="0"/></linearGradient></defs>${[55, 105, 155, 205].map((y, i) => `<line x1="50" x2="650" y1="${y}" y2="${y}" stroke="currentColor" opacity=".08"/><text x="10" y="${y + 4}" fill="currentColor" opacity=".45" font-size="11">${Math.round(max - i * span / 3)}</text>`).join('')}<polygon points="50,230 ${coords} 650,230" fill="url(#chartFill)"/><polyline points="${coords}" fill="none" stroke="#3474f6" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${values.map((v, i) => `<circle cx="${50 + i * 100}" cy="${205 - (v - min) / span * 140}" r="${i === 6 ? 6 : 4}" fill="${i === 6 ? '#2463eb' : 'var(--card)'}" stroke="#3474f6" stroke-width="2"/><text x="${50 + i * 100}" y="260" text-anchor="middle" fill="currentColor" opacity=".45" font-size="11">${period === 'Minggu' ? ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'][i] : `${i * 4 + 1} Nov`}</text>`).join('')}</svg>`;
+  const x = i => points.length === 1 ? 350 : 50 + i * (600 / (points.length - 1));
+  const y = v => 205 - (v - min) / span * 140;
+  const coords = points.map((p, i) => `${x(i)},${y(p.value)}`).join(' ');
+  return `<svg class="main-chart" viewBox="0 0 710 275" role="img" aria-label="${esc(metric)} ${esc(state.chartPeriod)}: ${points.length} titik data dari catatanmu"><defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2463eb" stop-opacity=".18"/><stop offset="1" stop-color="#2463eb" stop-opacity="0"/></linearGradient></defs>${[55, 105, 155, 205].map((gy, i) => `<line x1="50" x2="650" y1="${gy}" y2="${gy}" stroke="currentColor" opacity=".08"/><text x="10" y="${gy + 4}" fill="currentColor" opacity=".45" font-size="11">${Math.round(max - i * span / 3)}</text>`).join('')}${points.length > 1 ? `<polygon points="50,230 ${coords} 650,230" fill="url(#chartFill)"/><polyline points="${coords}" fill="none" stroke="#3474f6" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>` : ''}${points.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.value)}" r="${i === points.length - 1 ? 6 : 4}" fill="${i === points.length - 1 ? '#2463eb' : 'var(--card)'}" stroke="#3474f6" stroke-width="2"/><text x="${x(i)}" y="260" text-anchor="middle" fill="currentColor" opacity=".45" font-size="11">${esc(p.label)}</text>`).join('')}</svg>`;
 }
 function insightsPage() {
   const metrics = state.profile ? bodyMetrics(state.profile) : { bmi: 22.6, bmr: 1432, tdee: 2219 };
+  const chart = chartPoints();
   return `${greeting('Lihat seberapa jauh kamu melangkah.', 'Setiap catatan membantu kamu lebih mengenal diri sendiri.', `<button class="button secondary" data-action="export">${icon('download', '', 17)} Unduh data</button>`)}<div class="insights-top"><section class="card lifestyle-card">${progressRing(score(), score(), 'Skor gaya hidup', '', 142)}<div><span class="eyebrow">KEBIASAAN BAIKMU</span><h2>Terus bertumbuh,<br>setiap hari.</h2><p class="muted">Indikator kebiasaan, bukan penilaian medis.</p></div></section><section class="card insight-stat"><span class="metric-icon purple">${icon('ruler', '', 22)}</span><span>Indeks massa tubuh</span><strong>${metrics.bmi}<small> BMI</small></strong><p>Indikator umum untuk orang dewasa</p></section><section class="card insight-stat"><span class="metric-icon orange">${icon('flame', '', 22)}</span><span>Estimasi energi harian</span><strong>${num(metrics.tdee)}<small> kkal</small></strong><p>BMR ${num(metrics.bmr)} kkal · Mifflin-St Jeor</p></section></div>
-  <div class="insights-grid"><section class="card chart-card"><div class="rail-title"><div><h2>Tren kesehatanmu</h2><p class="muted small">${isPreview() ? 'Ilustrasi perubahan selama perjalananmu' : 'Ilustrasi grafik · lihat catatan aktual di bawah'}</p></div><div class="segmented">${['Minggu', 'Bulan'].map(p => `<button data-period="${p}" class="${state.chartPeriod === p ? 'active' : ''}">${p}</button>`).join('')}</div></div><div class="chart-tabs">${['Berat badan', 'Kalori', 'Aktivitas'].map(m => `<button data-metric="${m}" class="${state.chartMetric === m ? 'active' : ''}">${m}</button>`).join('')}</div>${chartSVG()}<div class="chart-caption"><span><b></b>${state.chartMetric}</span><small>Data ilustrasi · bukan hasil pengukuran</small></div></section><section class="card"><h2>Catatan berat badan</h2><p class="muted small">Perubahan kecil juga kemajuan.</p>${state.weights.length ? state.weights.slice(-5).reverse().map(w => `<div class="weight-row"><span>${esc(w.date)}</span><strong>${w.weight} kg</strong></div>`).join('') : empty('Mulai catatan pertamamu', 'Kenali pola dari waktu ke waktu.')}<button class="button secondary full" data-action="weight">${icon('plus', '', 16)} Catat berat</button></section></div><section class="card achievement-banner"><span class="achievement-icon">${icon('award', '', 37)}</span><div><div class="eyebrow">RAYAKAN LANGKAH KECIL</div><h2>Konsistensi layak dirayakan.</h2><p class="muted">Bagikan pencapaianmu, dengan privasi tetap terjaga.</p></div><button class="button" data-action="share">${icon('share-2', '', 17)} Buat kartu pencapaian</button></section>`;
+  <div class="insights-grid"><section class="card chart-card"><div class="rail-title"><div><h2>Tren kesehatanmu</h2><p class="muted small">${chart.note || 'Dari catatanmu'}</p></div><div class="segmented">${['Minggu', 'Bulan'].map(p => `<button data-period="${p}" class="${state.chartPeriod === p ? 'active' : ''}">${p}</button>`).join('')}</div></div><div class="chart-tabs">${['Berat badan', 'Kalori', 'Aktivitas'].map(m => `<button data-metric="${m}" class="${state.chartMetric === m ? 'active' : ''}">${m}</button>`).join('')}</div>${chart.points.length ? chartSVG() : empty('Belum ada catatan', isPreview() ? 'Masuk untuk melihat tren dari catatanmu.' : `Belum ada catatan ${state.chartMetric.toLowerCase()} pada periode ini.`, `<button class="button secondary" data-action="${state.chartMetric === 'Berat badan' ? 'weight' : state.chartMetric === 'Kalori' ? 'food' : 'exercise'}">Catat sekarang</button>`)}<div class="chart-caption"><span><b></b>${state.chartMetric}</span><small>${chart.points.length ? `Terakhir: ${num(chart.points.at(-1).value)} ${chart.unit} · ${esc(chart.points.at(-1).label)}` : 'Belum ada data pada periode ini'}</small></div></section><section class="card"><h2>Catatan berat badan</h2><p class="muted small">Perubahan kecil juga kemajuan.</p>${state.weights.length ? state.weights.slice(-5).reverse().map(w => `<div class="weight-row"><span>${esc(w.date)}</span><strong>${w.weight} kg</strong></div>`).join('') : empty('Mulai catatan pertamamu', 'Kenali pola dari waktu ke waktu.')}<button class="button secondary full" data-action="weight">${icon('plus', '', 16)} Catat berat</button></section></div><section class="card achievement-banner"><span class="achievement-icon">${icon('award', '', 37)}</span><div><div class="eyebrow">RAYAKAN LANGKAH KECIL</div><h2>Konsistensi layak dirayakan.</h2><p class="muted">Bagikan pencapaianmu, dengan privasi tetap terjaga.</p></div><button class="button" data-action="share">${icon('share-2', '', 17)} Buat kartu pencapaian</button></section>`;
 }
 
 function productVisual(p, large = false) {
@@ -181,8 +217,37 @@ function savedPage() {
   const saved = state.articles.filter(a => state.bookmarks.has(a.id));
   return `${greeting('Simpan yang baik untuk nanti.', 'Ruang kecil untuk bacaan yang ingin kamu kunjungi kembali.')}<section class="articles-grid saved-grid">${saved.length ? saved.map(articleCard).join('') : empty('Belum ada artikel tersimpan', 'Tekan ikon bookmark pada bacaan yang kamu suka.', '<button class="button" data-go="home">Temukan bacaan</button>')}</section>`;
 }
+function socialRow(platform, label, iconName) {
+  const acc = (state.connected_accounts || []).find(a => a.platform === platform && a.status !== 'disconnected');
+  const connectedAt = acc?.connected_at ? new Date(acc.connected_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+  if (acc) return `<div class="setting-row"><span class="metric-icon neutral">${icon(iconName, '', 21)}</span><span><strong>${label}</strong><small>Terhubung${connectedAt ? ` · ${connectedAt}` : ''}</small></span>${badge('TERHUBUNG', 'green')}<button class="button secondary social-connect" data-social-disconnect="${platform}">Putuskan</button></div>`;
+  return `<div class="setting-row"><span class="metric-icon neutral">${icon(iconName, '', 21)}</span><span><strong>${label}</strong><small>${session ? 'Belum terhubung' : 'Masuk terlebih dahulu untuk menghubungkan'}</small></span><button class="button secondary social-connect" data-social-connect="${platform}">Hubungkan</button></div>`;
+}
+async function connectSocial(platform) {
+  try {
+    const data = await api(`social/${platform}`, { method: 'POST' });
+    if (data?.url) location.href = data.url;
+    else toast('Tautan penyambungan belum tersedia.', 'error');
+  } catch (err) { toast(err.message, 'error'); }
+}
+async function disconnectSocial(platform) {
+  try {
+    await api(`social/${platform}`, { method: 'DELETE' });
+    state.connected_accounts = (state.connected_accounts || []).filter(a => a.platform !== platform);
+    shell(); toast(`Akun ${platform === 'instagram' ? 'Instagram' : 'Threads'} diputuskan.`);
+  } catch (err) { toast(err.message, 'error'); }
+}
+function handleSocialCallback() {
+  const params = new URLSearchParams(location.search);
+  const connected = params.get('social_connected');
+  const error = params.get('social_error');
+  if (!connected && !error) return;
+  if (connected) toast(`${connected === 'instagram' ? 'Instagram' : connected === 'threads' ? 'Threads' : connected} terhubung.`);
+  else toast(error, 'error');
+  history.replaceState(null, '', location.pathname + location.hash);
+}
 function profilePage() {
-  return `${greeting('Ruang yang sepenuhnya milikmu.', 'Atur profil, tampilan, dan privasimu dengan nyaman.')}<div class="profile-layout"><section class="card profile-overview"><span class="avatar profile-avatar">${esc(name().slice(0, 1))}</span><h2>${session ? esc(state.profile?.name || 'Profil sehatmu') : 'Halo, Sahabat'}</h2><p>${session ? esc(session.user.email) : 'Mulai perjalanan sehat yang lebih personal.'}</p>${session ? badge('AKUN TERHUBUNG', 'green') : badge('PRATINJAU APLIKASI')}<button class="button full" data-action="${session ? 'onboarding' : 'login'}">${icon(session ? 'user-round-pen' : 'log-in', '', 17)} ${session ? 'Edit profil sehat' : 'Masuk / Buat akun'}</button><div class="profile-note">${icon('shield-check', '', 18)}Data kesehatan tidak disimpan di browser saat pratinjau.</div></section><div class="settings-groups"><section class="card"><h2>Personalisasi</h2><button class="setting-row" data-action="onboarding"><span class="metric-icon blue">${icon('clipboard-list', '', 20)}</span><span><strong>Profil & tujuan sehat</strong><small>${state.profile ? 'Perbarui 6 langkah profilmu' : 'Kenalan lebih dekat dalam 6 langkah'}</small></span>${icon('chevron-right', '', 17)}</button><div class="setting-row"><span class="metric-icon purple">${icon('paintbrush', '', 20)}</span><span><strong>Tampilan aplikasi</strong><small>Pilih suasana yang nyaman di mata</small></span><div class="segmented">${['light', 'dark'].map(t => `<button data-theme="${t}" class="${state.theme === t ? 'active' : ''}" aria-label="Tema ${t === 'light' ? 'terang' : 'gelap'}">${icon(t === 'light' ? 'sun' : 'moon', '', 17)}</button>`).join('')}</div></div></section><section class="card"><h2>Privasi & data</h2><button class="setting-row" data-action="export"><span class="metric-icon green">${icon('download', '', 20)}</span><span><strong>Unduh datamu</strong><small>Salinan catatanmu dalam format JSON</small></span>${icon('chevron-right', '', 17)}</button><button class="setting-row" data-action="privacy"><span class="metric-icon blue">${icon('shield-check', '', 20)}</span><span><strong>Privasi & keamanan</strong><small>Ketahui bagaimana datamu digunakan</small></span>${icon('chevron-right', '', 17)}</button><button class="setting-row" data-action="delete-account"><span class="metric-icon pink">${icon('trash-2', '', 20)}</span><span><strong class="danger-text">Hapus akun & data</strong><small>Kamu memegang kendali atas datamu</small></span>${icon('chevron-right', '', 17)}</button></section><section class="card"><h2>Akun terhubung</h2><p class="muted small">Bagikan pencapaian lewat share sheet perangkat saat ini.</p>${[['instagram', 'Instagram'], ['at-sign', 'Threads']].map(([i, t]) => `<div class="setting-row"><span class="metric-icon neutral">${icon(i, '', 21)}</span><span><strong>${t}</strong><small>Integrasi OAuth tersedia pada fase 2</small></span>${badge('SEGERA', 'neutral')}</div>`).join('')}</section>${session ? '<button class="button secondary" data-action="logout">Keluar dari akun</button>' : ''}</div></div>`;
+  return `${greeting('Ruang yang sepenuhnya milikmu.', 'Atur profil, tampilan, dan privasimu dengan nyaman.')}<div class="profile-layout"><section class="card profile-overview"><span class="avatar profile-avatar">${esc(name().slice(0, 1))}</span><h2>${session ? esc(state.profile?.name || 'Profil sehatmu') : 'Halo, Sahabat'}</h2><p>${session ? esc(session.user.email) : 'Mulai perjalanan sehat yang lebih personal.'}</p>${session ? badge('AKUN TERHUBUNG', 'green') : badge('PRATINJAU APLIKASI')}<button class="button full" data-action="${session ? 'onboarding' : 'login'}">${icon(session ? 'user-round-pen' : 'log-in', '', 17)} ${session ? 'Edit profil sehat' : 'Masuk / Buat akun'}</button><div class="profile-note">${icon('shield-check', '', 18)}Data kesehatan tidak disimpan di browser saat pratinjau.</div></section><div class="settings-groups"><section class="card"><h2>Personalisasi</h2><button class="setting-row" data-action="onboarding"><span class="metric-icon blue">${icon('clipboard-list', '', 20)}</span><span><strong>Profil & tujuan sehat</strong><small>${state.profile ? 'Perbarui 6 langkah profilmu' : 'Kenalan lebih dekat dalam 6 langkah'}</small></span>${icon('chevron-right', '', 17)}</button><div class="setting-row"><span class="metric-icon purple">${icon('paintbrush', '', 20)}</span><span><strong>Tampilan aplikasi</strong><small>Pilih suasana yang nyaman di mata</small></span><div class="segmented">${['light', 'dark'].map(t => `<button data-theme="${t}" class="${state.theme === t ? 'active' : ''}" aria-label="Tema ${t === 'light' ? 'terang' : 'gelap'}">${icon(t === 'light' ? 'sun' : 'moon', '', 17)}</button>`).join('')}</div></div></section><section class="card"><h2>Privasi & data</h2><button class="setting-row" data-action="export"><span class="metric-icon green">${icon('download', '', 20)}</span><span><strong>Unduh datamu</strong><small>Salinan catatanmu dalam format JSON</small></span>${icon('chevron-right', '', 17)}</button><button class="setting-row" data-action="privacy"><span class="metric-icon blue">${icon('shield-check', '', 20)}</span><span><strong>Privasi & keamanan</strong><small>Ketahui bagaimana datamu digunakan</small></span>${icon('chevron-right', '', 17)}</button><button class="setting-row" data-action="delete-account"><span class="metric-icon pink">${icon('trash-2', '', 20)}</span><span><strong class="danger-text">Hapus akun & data</strong><small>Kamu memegang kendali atas datamu</small></span>${icon('chevron-right', '', 17)}</button></section><section class="card"><h2>Akun terhubung</h2><p class="muted small">Bagikan pencapaian lewat share sheet perangkat saat ini.</p>${socialRow('instagram', 'Instagram', 'instagram')}${socialRow('threads', 'Threads', 'at-sign')}</section>${session ? '<button class="button secondary" data-action="logout">Keluar dari akun</button>' : ''}</div></div>`;
 }
 
 function go(route) { if (state.route === route) { shell(); window.scrollTo(0, 0); } else location.hash = route; }
@@ -245,6 +310,8 @@ document.addEventListener('click', async e => {
   if (el.dataset.removeFood) {
     try { if (session) await api(`logs/food/${encodeURIComponent(el.dataset.removeFood)}`, { method: 'DELETE' }); state.foodLogs = state.foodLogs.filter(f => f.id !== el.dataset.removeFood); shell(); toast('Catatan dihapus.'); } catch (err) { toast(err.message, 'error'); }
   }
+  if (el.dataset.socialConnect) { await connectSocial(el.dataset.socialConnect); return; }
+  if (el.dataset.socialDisconnect) { await disconnectSocial(el.dataset.socialDisconnect); return; }
   if (!el.dataset.action) return;
   const actions = {
     theme: () => setTheme(state.theme === 'light' ? 'dark' : 'light'), 'close-modal': closeModal,
@@ -258,7 +325,7 @@ document.addEventListener('click', async e => {
     'clear-chat': () => { state.messages = []; shell(); },
     'reset-products': () => { state.category = 'Semua'; state.search = ''; shell(); },
     voice: voiceInput,
-    logout: async () => { await supabase?.auth.signOut(); state.profile = null; state.foodLogs = [...previewFoodLogs]; state.messages = []; state.weights = []; state.exercises = []; state.supplements = []; state.bookmarks.clear(); state.planDone.clear(); state.water = 5; shell(); toast('Kamu sudah keluar.'); },
+    logout: async () => { await supabase?.auth.signOut(); state.profile = null; state.foodLogs = [...previewFoodLogs]; state.messages = []; state.weights = []; state.exercises = []; state.supplements = []; state.connected_accounts = []; state.bookmarks.clear(); state.planDone.clear(); state.water = 5; shell(); toast('Kamu sudah keluar.'); },
   };
   if (actions[el.dataset.action]) await actions[el.dataset.action]();
 });
@@ -352,9 +419,10 @@ function captureOnboarding(validate) {
 
 function foodModal(mode = 'text', preset = null, photoURL = '') {
   let selection = preset;
-  openModal(`${modalHead('CATAT GIZI', mode === 'search' ? 'Apa yang kamu nikmati?' : 'Ceritakan isi piringmu.', 'Estimasi bisa kamu periksa dan koreksi sebelum disimpan.')}<div class="segmented food-tabs"><button id="food-text-tab" class="${mode === 'text' ? 'active' : ''}">Tulis bebas</button><button id="food-search-tab" class="${mode === 'search' ? 'active' : ''}">Manual cari</button></div>${photoURL ? `<img src="${photoURL}" alt="Foto piring yang dipilih" class="food-photo-preview"/>` : ''}${mode === 'text' ? `<form id="estimate-food-form">${field('Makanan yang kamu nikmati', '<textarea name="description" placeholder="Contoh: nasi putih, ayam panggang, dan satu telur rebus" maxlength="1000" rows="3" required></textarea>')}<button class="button secondary full">${icon('sparkles', '', 17)} Estimasi gizi</button></form>` : `<label class="search-box">${icon('search', '', 18)}<input id="food-search-input" placeholder="Cari nasi, ayam, telur..." aria-label="Cari makanan"/></label><p class="form-note">${isPreview() ? 'Basis data ilustrasi untuk pratinjau; nilai perkiraan per porsi.' : 'Basis data makanan terverifikasi.'}</p><div class="food-search-results" id="food-results"></div>`}<div id="food-editor"></div>`, { title: 'Catat makanan' });
+  openModal(`${modalHead('CATAT GIZI', (mode === 'search' ? 'Apa yang kamu nikmati?' : mode === 'product' ? 'Produk Darya Varia yang mana?' : 'Ceritakan isi piringmu.'), 'Estimasi bisa kamu periksa dan koreksi sebelum disimpan.')}<div class="segmented food-tabs"><button id="food-text-tab" class="${mode === 'text' ? 'active' : ''}">Tulis bebas</button><button id="food-search-tab" class="${mode === 'search' ? 'active' : ''}">Manual cari</button><button id="food-product-tab" class="${mode === 'product' ? 'active' : ''}">Cari Produk Darya Varia</button></div>${photoURL ? `<img src="${photoURL}" alt="Foto piring yang dipilih" class="food-photo-preview"/>` : ''}${mode === 'text' ? `<form id="estimate-food-form">${field('Makanan yang kamu nikmati', '<textarea name="description" placeholder="Contoh: nasi putih, ayam panggang, dan satu telur rebus" maxlength="1000" rows="3" required></textarea>')}<button class="button secondary full">${icon('sparkles', '', 17)} Estimasi gizi</button></form>` : mode === 'search' ? `<label class="search-box">${icon('search', '', 18)}<input id="food-search-input" placeholder="Cari nasi, ayam, telur..." aria-label="Cari makanan"/></label><p class="form-note">${isPreview() ? 'Basis data ilustrasi untuk pratinjau; nilai perkiraan per porsi.' : 'Basis data makanan terverifikasi.'}</p><div class="food-search-results" id="food-results"></div>` : `<label class="search-box">${icon('search', '', 18)}<input id="product-search-input" placeholder="Cari Enervon-C, Natur-E..." aria-label="Cari produk Darya Varia"/></label><p class="form-note">Hanya produk non-resep dari katalog Darya Varia.</p><div class="food-search-results" id="product-results"></div>`}<div id="food-editor"></div>`, { title: 'Catat makanan' });
   document.querySelector('#food-text-tab').onclick = () => foodModal('text');
   document.querySelector('#food-search-tab').onclick = () => foodModal('search');
+  document.querySelector('#food-product-tab').onclick = () => foodModal('product');
   const showEditor = f => {
     selection = f;
     document.querySelector('#food-editor').innerHTML = `<form id="food-log-form"><div class="editor-divider"></div><div class="rail-title"><h3>Periksa estimasinya</h3>${badge('BISA DIKOREKSI', 'orange')}</div>${field('Nama makanan', input('name', f.name, 'required maxlength="160"'))}<div class="form-grid">${field('Porsi (pengali)', input('portions', 1, 'type="number" min="0.1" max="20" step="0.1" required'))}${field('Waktu makan', select('meal', 'Makan siang', [['Sarapan', 'Sarapan'], ['Makan siang', 'Makan siang'], ['Makan malam', 'Makan malam'], ['Camilan', 'Camilan']]))}</div><div class="form-grid">${field('Kalori (kkal)', input('calories', f.calories, 'type="number" min="0" max="10000" required'))}${field('Protein (g)', input('protein', f.protein || 0, 'type="number" min="0" max="1000" step="0.1" required'))}${field('Karbohidrat (g)', input('carbs', f.carbs || 0, 'type="number" min="0" max="1000" step="0.1" required'))}${field('Lemak (g)', input('fat', f.fat || 0, 'type="number" min="0" max="1000" step="0.1" required'))}</div><p class="form-note">Nilai di atas untuk satu porsi. Total dikalikan jumlah porsi saat disimpan.</p><button class="button full">${icon('check', '', 17)} Simpan catatan</button></form>`; hydrateIcons();
@@ -373,6 +441,13 @@ function foodModal(mode = 'text', preset = null, photoURL = '') {
       } catch (err) { toast(err.message, 'error'); }
     };
     let timer; document.querySelector('#food-search-input').oninput = e => { clearTimeout(timer); timer = setTimeout(() => renderResults(e.target.value), 220); }; renderResults('');
+  } else if (mode === 'product') {
+    const renderProducts = q => {
+      const list = state.products.filter(p => p.kind !== 'prescription' && `${p.name} ${p.subtitle || ''} ${p.category || ''}`.toLowerCase().includes(q.toLowerCase()));
+      document.querySelector('#product-results').innerHTML = list.length ? list.map(p => `<button data-product-result="${esc(p.id)}"><span class="food-icon">${icon(p.icon || 'pill', '', 20)}</span><span><strong>${esc(p.name)}</strong><small>${esc(p.dosage || p.form || p.category || '')}</small></span>${icon('chevron-right', '', 17)}</button>`).join('') : '<p class="mini-empty">Produk tidak ditemukan. Produk resep tidak ditampilkan di sini.</p>';
+      document.querySelectorAll('[data-product-result]').forEach(b => b.onclick = () => productModal(b.dataset.productResult)); hydrateIcons();
+    };
+    let timer; document.querySelector('#product-search-input').oninput = e => { clearTimeout(timer); timer = setTimeout(() => renderProducts(e.target.value), 220); }; renderProducts('');
   } else document.querySelector('#estimate-food-form').onsubmit = async e => {
     e.preventDefault(); const description = new FormData(e.target).get('description'); const button = e.target.querySelector('button'); button.disabled = true;
     try {
@@ -436,13 +511,63 @@ function weightModal() {
   openModal(`${modalHead('JAGA BERAT BADAN', 'Kenali perubahanmu.', 'Catat secara berkala, tanpa perlu terburu-buru.')}<form id="weight-form"><div class="weight-input-wrap"><input name="weight" aria-label="Berat badan dalam kg" type="number" value="${last}" min="25" max="350" step="0.1" required/><span>kg</span></div><div class="weight-ruler"></div>${field('Tanggal catatan', input('date', localDay(), `type="date" max="${localDay()}" required`))}<p class="form-note">Angka berat badan tidak menentukan nilai dirimu.</p><button class="button full">${icon('plus', '', 18)} Simpan catatan</button></form>`, { title: 'Catat berat badan' });
   document.querySelector('#weight-form').onsubmit = async e => { e.preventDefault(); const fd = new FormData(e.target), log = { weight: Number(fd.get('weight')), date: fd.get('date') }; try { const saved = session ? await api('logs/weight', { method: 'POST', body: log }) : { ...log, id: crypto.randomUUID() }; state.weights.push(saved); closeModal(); shell(); toast('Catatan berat ditambahkan.'); } catch (err) { toast(err.message, 'error'); } };
 }
+let exerciseCatalog = null;
+let exerciseCatalogFailed = false;
+function catalogActivityKey(ex) {
+  const cat = String(ex.category || '').toLowerCase();
+  if (cat.includes('strength') || cat.includes('powerlifting') || cat.includes('olympic') || cat.includes('strongman')) return 'strength';
+  if (cat.includes('stretching')) return 'yoga';
+  if (cat.includes('cardio') || cat.includes('plyometrics')) return 'running';
+  return 'walking';
+}
+async function loadExerciseCatalog() {
+  if (exerciseCatalog || exerciseCatalogFailed) return exerciseCatalog;
+  try {
+    const res = await fetch('/exercises.json');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    exerciseCatalog = Array.isArray(data) ? data : [];
+  } catch { exerciseCatalog = null; exerciseCatalogFailed = true; }
+  return exerciseCatalog;
+}
 function exerciseModal() {
-  openModal(`${modalHead('EXERCISE', 'Setiap gerak berarti.', 'Pilih aktivitas yang membuatmu merasa lebih baik.')}<form id="exercise-form">${field('Aktivitas', select('activity', 'walking', exerciseOptions))}${field('Durasi (menit)', input('minutes', 30, 'type="number" min="1" max="600" required'))}<div class="notice">${icon('info', '', 18)}Energi yang digunakan merupakan estimasi berdasarkan durasi dan berat badan.</div><button class="button full">${icon('check', '', 18)} Catat aktivitasku</button></form>`, { title: 'Catat exercise' });
+  let selectedCatalog = null;
+  openModal(`${modalHead('EXERCISE', 'Setiap gerak berarti.', 'Pilih aktivitas yang membuatmu merasa lebih baik.')}<form id="exercise-form"><div class="catalog-picker"><label class="search-box">${icon('search', '', 18)}<input id="catalog-search-input" placeholder="Cari latihan dari katalog (contoh: squat, plank...)" aria-label="Cari latihan"/></label><div class="form-grid"><label class="form-field"><span>Grup otot</span><select id="catalog-muscle-filter"><option value="">Semua grup otot</option></select></label><label class="form-field"><span>Peralatan</span><select id="catalog-equipment-filter"><option value="">Semua peralatan</option></select></label></div><p class="form-note" id="catalog-status">Memuat katalog latihan...</p><div class="food-search-results" id="catalog-results"></div><div id="catalog-chosen"></div></div>${field('Aktivitas', select('activity', 'walking', exerciseOptions))}${field('Durasi (menit)', input('minutes', 30, 'type="number" min="1" max="600" required'))}<div class="notice">${icon('info', '', 18)}Energi yang digunakan merupakan estimasi berdasarkan durasi dan berat badan.</div><button class="button full">${icon('check', '', 18)} Catat aktivitasku</button></form>`, { title: 'Catat exercise' });
+  const renderCatalog = () => {
+    const box = document.querySelector('#catalog-results'); if (!box) return;
+    const q = (document.querySelector('#catalog-search-input')?.value || '').toLowerCase();
+    const muscle = document.querySelector('#catalog-muscle-filter')?.value || '';
+    const equip = document.querySelector('#catalog-equipment-filter')?.value || '';
+    const status = document.querySelector('#catalog-status');
+    if (exerciseCatalogFailed) { status.textContent = 'Katalog latihan belum dapat dimuat. Pilih aktivitas di bawah ini.'; box.innerHTML = ''; return; }
+    if (!exerciseCatalog) { status.textContent = 'Memuat katalog latihan...'; return; }
+    const list = exerciseCatalog.filter(ex => (!q || ex.name.toLowerCase().includes(q)) && (!muscle || (ex.primaryMuscles || []).includes(muscle)) && (!equip || ex.equipment === equip)).slice(0, 12);
+    status.textContent = (q || muscle || equip) ? `${list.length} latihan ditemukan` : `Ketik untuk mencari dari ${exerciseCatalog.length} latihan.`;
+    box.innerHTML = list.length ? list.map(ex => `<button type="button" data-catalog-id="${esc(ex.id)}"><span class="food-icon">${icon('dumbbell', '', 20)}</span><span><strong>${esc(ex.name)}</strong><small>${esc((ex.primaryMuscles || []).join(', ') || ex.category || '')}${ex.equipment ? ` · ${esc(ex.equipment)}` : ''}</small></span>${icon('plus', '', 17)}</button>`).join('') : '<p class="mini-empty">Latihan tidak ditemukan. Coba kata kunci lain.</p>';
+    box.querySelectorAll('[data-catalog-id]').forEach(b => b.onclick = () => {
+      selectedCatalog = exerciseCatalog.find(x => x.id === b.dataset.catalogId); if (!selectedCatalog) return;
+      const sel = document.querySelector('#exercise-form select[name="activity"]');
+      if (sel) sel.value = catalogActivityKey(selectedCatalog);
+      document.querySelector('#catalog-chosen').innerHTML = `<div class="notice">${icon('check', '', 18)}Latihan terpilih: <strong>${esc(selectedCatalog.name)}</strong> · dicatat sebagai ${esc(sel?.selectedOptions?.[0]?.textContent || '')}. <button type="button" class="inline-button" id="catalog-clear">Batalkan pilihan</button></div>`; hydrateIcons();
+      document.querySelector('#catalog-clear').onclick = () => { selectedCatalog = null; document.querySelector('#catalog-chosen').innerHTML = ''; };
+    }); hydrateIcons();
+  };
+  const fillCatalogFilters = () => {
+    const muscles = [...new Set(exerciseCatalog.flatMap(ex => ex.primaryMuscles || []))].sort();
+    const equipments = [...new Set(exerciseCatalog.map(ex => ex.equipment).filter(Boolean))].sort();
+    document.querySelector('#catalog-muscle-filter').innerHTML = '<option value="">Semua grup otot</option>' + muscles.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    document.querySelector('#catalog-equipment-filter').innerHTML = '<option value="">Semua peralatan</option>' + equipments.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  };
+  document.querySelector('#catalog-search-input').oninput = renderCatalog;
+  document.querySelector('#catalog-search-input').onkeydown = e => { if (e.key === 'Enter') e.preventDefault(); };
+  document.querySelector('#catalog-muscle-filter').onchange = renderCatalog;
+  document.querySelector('#catalog-equipment-filter').onchange = renderCatalog;
+  loadExerciseCatalog().then(() => { if (exerciseCatalog) fillCatalogFilters(); renderCatalog(); });
   document.querySelector('#exercise-form').onsubmit = async e => {
     e.preventDefault(); const fd = new FormData(e.target), activity = fd.get('activity'), minutes = Number(fd.get('minutes'));
     const met = { walking: 3.5, running: 7, cycling: 6, swimming: 6.5, yoga: 2.5, strength: 5, hiit: 8, pilates: 3.8, aerobics: 5.5, 'jump-rope': 9, badminton: 5.5 }[activity] || 4;
     const log = { activity, minutes, calories: Math.round(met * 3.5 * Number(state.profile?.weight || 65) / 200 * minutes), estimated: true };
-    try { const saved = session ? await api('logs/exercise', { method: 'POST', body: log }) : { ...log, id: crypto.randomUUID() }; state.exercises.push(saved); closeModal(); shell(); toast(`${minutes} menit gerakmu tercatat. Bagus untuk konsistensimu!`); } catch (err) { toast(err.message, 'error'); }
+    try { const saved = session ? await api('logs/exercise', { method: 'POST', body: log }) : { ...log, id: crypto.randomUUID() }; state.exercises.push({ ...saved, label: selectedCatalog?.name }); closeModal(); shell(); toast(`${minutes} menit gerakmu tercatat. Bagus untuk konsistensimu!`); } catch (err) { toast(err.message, 'error'); }
   };
 }
 function supplementModal() {
@@ -475,7 +600,7 @@ async function exportData() {
 }
 function deleteModal() {
   openModal(`${modalHead('KENDALI DATAMU', session ? 'Hapus akun dan seluruh data?' : 'Bersihkan data pratinjau?', session ? 'Tindakan ini permanen. Catatan kesehatan, profil, dan akses akun akan dihapus.' : 'Profil dan catatan sesi ini akan dihapus. Tidak ada akun yang dibuat.')}<form id="delete-form">${field('Ketik HAPUS untuk melanjutkan', input('confirm', '', 'required pattern="HAPUS" autocomplete="off" placeholder="HAPUS"'))}<button class="button danger full">${session ? 'Hapus akun & data secara permanen' : 'Bersihkan sesi pratinjau'}</button></form>`, { title: 'Hapus data' });
-  document.querySelector('#delete-form').onsubmit = async e => { e.preventDefault(); const button = e.target.querySelector('button'); button.disabled = true; try { if (session) { await api('account', { method: 'DELETE' }); await supabase.auth.signOut(); } state.profile = null; state.messages = []; state.foodLogs = []; state.weights = []; state.exercises = []; state.supplements = []; state.planDone.clear(); state.bookmarks.clear(); state.water = 0; closeModal(); shell(); toast('Akun dan data sesi sudah dibersihkan.'); } catch (err) { toast(err.message, 'error'); button.disabled = false; } };
+  document.querySelector('#delete-form').onsubmit = async e => { e.preventDefault(); const button = e.target.querySelector('button'); button.disabled = true; try { if (session) { await api('account', { method: 'DELETE' }); await supabase.auth.signOut(); } state.profile = null; state.messages = []; state.foodLogs = []; state.weights = []; state.exercises = []; state.supplements = []; state.connected_accounts = []; state.planDone.clear(); state.bookmarks.clear(); state.water = 0; closeModal(); shell(); toast('Akun dan data sesi sudah dibersihkan.'); } catch (err) { toast(err.message, 'error'); button.disabled = false; } };
 }
 function shareModal() {
   const data = sharePayload({ streak: state.planDone.size === 3 ? 1 : 0, completed: state.planDone.size });
@@ -501,7 +626,7 @@ function voiceInput() {
 async function refreshUser() {
   if (!session) return;
   try {
-    const data = await loadUserData(); state.profile = data.profile; state.products = data.products; state.articles = data.articles; state.bookmarks = new Set(data.bookmarks); state.foodLogs = data.food_logs; state.weights = data.weight_logs; state.exercises = data.exercise_logs; state.supplements = data.supplement_logs; state.planDone = new Set(data.habits); state.water = data.water; shell();
+    const data = await loadUserData(); state.profile = data.profile; state.products = data.products; state.articles = data.articles; state.bookmarks = new Set(data.bookmarks); state.foodLogs = data.food_logs; state.weights = data.weight_logs; state.exercises = data.exercise_logs; state.supplements = data.supplement_logs; state.planDone = new Set(data.habits); state.water = data.water; state.connected_accounts = data.connected_accounts || []; shell();
   } catch (err) { toast(err.message, 'error'); }
 }
 shell();
