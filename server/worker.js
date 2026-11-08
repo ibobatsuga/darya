@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { bodyMetrics, validProfile, safetyCheck, eligibleProducts, safeOrderUrl, DISCLAIMER, localDay } from '../src/domain.js';
-import { sakelarCompletion, rankProducts, parseJSON, validateFoodEstimate } from './ai.js';
+import { sakelarCompletion, chatCompletion, rankProducts, parseJSON, validateFoodEstimate } from './ai.js';
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 class APIError extends Error { constructor(status, message) { super(message); this.status = status; } }
@@ -48,6 +48,29 @@ async function dashboard(client, user) {
   return json({ profile: values[0]?.data || null, products: values[1], articles: values[2], bookmarks: values[3].map(x => x.article_id), food_logs: values[4], weight_logs: values[5], exercise_logs: values[6], supplement_logs: values[7].map(s => ({ ...s, name: s.products?.name || 'Suplemen' })), habits: values[8].map(x => x.habit_id), water: values[9]?.glasses || 0, connected_accounts: values[10] });
 }
 
+function consultSystemPrompt(profile, selected) {
+  const metrics = bodyMetrics(profile);
+  const profileLine = [
+    profile.name ? `Nama: ${profile.name}` : null,
+    `Usia: ${profile.age} tahun, jenis kelamin: ${profile.sex === 'female' ? 'perempuan' : 'laki-laki'}`,
+    `Berat: ${profile.weight} kg, tinggi: ${profile.height} cm${metrics ? `, BMI: ${metrics.bmi}` : ''}`,
+    `Aktivitas: ${profile.activity}, tidur: ${profile.sleep || 7} jam/hari`,
+    `Tujuan: ${profile.goals.join(', ')}${profile.targetWeight ? `, target berat: ${profile.targetWeight} kg` : ''}`,
+  ].filter(Boolean).join('. ');
+  const productLine = selected.length
+    ? `Produk terverifikasi yang cocok (hanya produk ini yang boleh kamu sebut namanya, dan hanya dengan data katalog di bawah — jangan tambah klaim apa pun):\n${selected.map(p => `- ${p.name}: manfaat: ${p.benefits || '-'}. Komposisi: ${p.composition || '-'}. Dosis: ${p.dosage || '-'}. Peringatan: ${p.warnings || '-'}.`).join('\n')}`
+    : 'Belum ada produk terverifikasi yang cocok untuk tujuan pengguna — jangan merekomendasikan produk apa pun, dan katakan dengan jelas bahwa belum ada produk yang sesuai.';
+  return `Kamu Darya, konsultan kesehatan dan nutrisi yang ramah, empatik, dan praktis. Jawab dalam Bahasa Indonesia.\n\nProfil pengguna: ${profileLine}\n\n${productLine}\n\nAturan wajib:\n- Maksimal sekitar 120 kata, lalu akhiri dengan 1 pertanyaan lanjutan.\n- Beri 1 tips praktis yang bisa dilakukan hari ini, terkait tujuan dan profil pengguna.\n- Jangan mendiagnosis penyakit, jangan memberi angka dosis di luar data katalog produk di atas, jangan merekomendasikan obat resep, jangan menyebut nama produk selain yang tercantum di atas, jangan menjanjikan kesembuhan.`;
+}
+
+async function generateConsultReply(env, profile, userMessage, selected) {
+  const reply = await chatCompletion(env, [
+    { role: 'system', content: consultSystemPrompt(profile, selected) },
+    { role: 'user', content: userMessage },
+  ], 400);
+  return reply.trim().slice(0, 1500);
+}
+
 async function consult(client, user, env, body) {
   if (!text(body.message, 2000)) fail(400, 'Tulis pertanyaanmu terlebih dahulu, maksimal 2.000 karakter.');
   const record = ensure(await client.from('profiles').select('data').eq('user_id', user.id).maybeSingle());
@@ -58,7 +81,6 @@ async function consult(client, user, env, body) {
   }
   const products = ensure(await client.from('products').select('*').eq('verified', true));
   const candidates = eligibleProducts(products, record.data, body.message);
-  if (!candidates.length) return json({ message: `Belum ada pilihan produk terverifikasi yang sesuai untuk tujuanmu. Kamu tetap bisa mulai dari rencana kebiasaan harian atau berdiskusi dengan apoteker.\n\n${DISCLAIMER}`, products: [] });
   const admin = adminClient(env);
   const fingerprint = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ profile: record.data, message: body.message.toLowerCase().trim(), candidates: candidates.map(p => [p.id, p.updated_at]) })));
   const cacheKey = [...new Uint8Array(fingerprint)].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -66,9 +88,16 @@ async function consult(client, user, env, body) {
   if (cache.length) return json(cache[0].response);
   const remaining = ensure(await client.rpc('consume_ai_quota', { p_limit: Math.min(Number(env.DAILY_CONSULTATION_LIMIT) || 10, 10) }));
   if (remaining < 0) fail(429, 'Konsultasi hari ini sudah mencapai batas. Kamu bisa melanjutkan kembali besok.');
-  let selected;
-  try { selected = await rankProducts(env, candidates, record.data.goals); } catch { fail(503, 'Darya sedang beristirahat sebentar. Coba kembali nanti; tidak ada rekomendasi baru yang dibuat.'); }
-  const result = { message: selected.length ? `Berikut informasi produk yang sesuai dengan tujuan pada profilmu. Baca komposisi, dosis, dan peringatannya sebelum memilih.\n\n${DISCLAIMER}` : `Belum ada pilihan yang dapat disarankan saat ini. Diskusikan kebutuhanmu dengan apoteker.\n\n${DISCLAIMER}`, products: selected, remaining };
+  // Darya AI selalu menjawab: bila ada kandidat, pilih produknya lalu jawab
+  // secara percakapan; bila tidak ada kandidat, tetap jawab dengan panduan
+  // umum tanpa rekomendasi produk. Tidak ada lagi jalan buntu.
+  let selected = [];
+  if (candidates.length) {
+    try { selected = await rankProducts(env, candidates, record.data.goals); } catch { fail(503, 'Darya sedang beristirahat sebentar. Coba kembali nanti; tidak ada rekomendasi baru yang dibuat.'); }
+  }
+  let reply;
+  try { reply = await generateConsultReply(env, record.data, body.message, selected); } catch { fail(503, 'Darya sedang beristirahat sebentar. Coba kembali nanti; tidak ada rekomendasi baru yang dibuat.'); }
+  const result = { message: `${reply}\n\n${DISCLAIMER}`, products: selected, remaining };
   const consultation = ensure(await client.from('consultations').insert({ user_id: user.id, summary: record.data.goals.join(', '), cache_key: cacheKey, response: result }).select('id').single());
   if (selected.length) ensure(await client.from('recommendations').insert(selected.map(p => ({ user_id: user.id, consultation_id: consultation.id, product_id: p.id, reason: p.reason }))));
   ensure(await admin.from('audit_log').insert({ user_id: user.id, event: 'recommendation', red_flag: false, product_ids: selected.map(p => p.id) }));
