@@ -17,6 +17,8 @@
     "@fontsource/dm-sans": "^5.2.8",
     "@fontsource/plus-jakarta-sans": "^5.2.8",
     "@supabase/supabase-js": "^2.86.0",
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
     "lucide": "^0.468.0"
   },
   "devDependencies": {

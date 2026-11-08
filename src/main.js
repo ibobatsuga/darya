@@ -8,6 +8,7 @@ import '@fontsource/plus-jakarta-sans/600.css';
 import '@fontsource/plus-jakarta-sans/700.css';
 import '@fontsource/plus-jakarta-sans/800.css';
 import { createIcons, icons } from 'lucide';
+import { BrowserMultiFormatReader } from '@zxing/browser';
 import { previewProducts, previewArticles, foods, goals, previewFoodLogs, exerciseOptions } from './data.js';
 import { bodyMetrics, validProfile, safetyCheck, lifestyleScore, sharePayload, escapeHTML as esc, DISCLAIMER, localDay } from './domain.js';
 import { api, supabase, session, initializeAuth, loadUserData, signIn, signUp, googleSignIn, resetPassword } from './api.js';
@@ -468,19 +469,168 @@ function foodModal(mode = 'text', preset = null, photoURL = '') {
 }
 
 function photoModal() {
-  openModal(`${modalHead('AI FOTO PIRING', 'Satu foto, awal sebuah catatan.', 'Foto diproses hanya setelah kamu memilihnya. Hasilnya selalu estimasi dan dapat dikoreksi.')}<label class="photo-dropzone" for="food-photo">${icon('camera', '', 42)}<strong>Pilih atau ambil foto makanan</strong><span>JPG, PNG, atau WebP · maksimal 5 MB</span><input id="food-photo" type="file" accept="image/jpeg,image/png,image/webp" capture="environment"/></label><div class="notice">${icon('info', '', 18)}${session ? 'Hindari wajah, dokumen, atau informasi pribadi di foto.' : 'AI foto belum terhubung dalam pratinjau. Kamu tetap dapat melihat foto dan mengisi gizi secara manual.'}</div><div id="photo-status" role="status"></div>`, { title: 'Foto piring' });
-  document.querySelector('#food-photo').onchange = async e => {
-    const file = e.target.files[0]; if (!file) return;
-    if (file.size > 5 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { toast('Pilih gambar JPG, PNG, atau WebP maksimal 5 MB.', 'error'); return; }
-    const previewURL = URL.createObjectURL(file);
-    if (!session) { foodModal('text', { name: 'Makanan dari foto', calories: 0 }, previewURL); modalCleanup = () => URL.revokeObjectURL(previewURL); return; }
-    document.querySelector('#photo-status').innerHTML = `<p class="form-note">${icon('loader-circle', 'spin', 17)} Memeriksa isi piringmu...</p>`; hydrateIcons();
-    try {
-      const compressed = await compressImage(file); const data = await api('food-estimate', { method: 'POST', body: { image: compressed } });
-      foodModal('text', data, previewURL); modalCleanup = () => URL.revokeObjectURL(previewURL);
-    } catch (err) { URL.revokeObjectURL(previewURL); toast(err.message, 'error'); }
+  openModal(`${modalHead('AI FOTO PIRING', 'Arahkan kamera ke piringmu.', 'Kamera live otomatis aktif. Arahkan ke makananmu dan tekan tombol potret.')}
+<div class="camera-live-box">
+  <video id="plate-video" autoplay muted playsinline></video>
+  <div class="plate-guide-wrap">
+    <div class="plate-guide"></div>
+    <span class="camera-hint">${icon('sparkles', '', 14)} Posisikan piring di dalam lingkaran</span>
+  </div>
+  <div id="plate-camera-status" class="camera-overlay-state">
+    <span class="spin">${icon('loader-circle', '', 24)}</span>
+    <span>Mengaktifkan kamera live...</span>
+  </div>
+</div>
+<div class="camera-actions">
+  <button class="camera-shutter-btn" id="snap-plate-photo" type="button" aria-label="Ambil foto makanan" title="Ambil foto makanan">
+    ${icon('camera', '', 28)}
+  </button>
+  <div class="camera-secondary-row">
+    <label class="button secondary full file-fallback-btn" for="food-photo-fallback">
+      ${icon('image', '', 16)} Pilih dari galeri
+      <input id="food-photo-fallback" type="file" accept="image/jpeg,image/png,image/webp" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;" />
+    </label>
+    <button class="button secondary full" id="switch-camera-btn" type="button" style="display:none">
+      ${icon('switch-camera', '', 16)} Ganti kamera
+    </button>
+  </div>
+</div>
+<div class="notice">${icon('info', '', 18)}${session ? 'Foto dianalisis otomatis dengan Sakelar AI (gpt-6.1-terra). Estimasi selalu dapat dikoreksi.' : 'AI foto belum terhubung dalam pratinjau. Kamu tetap dapat memotret dan mengisi gizi secara manual.'}</div>
+<div id="photo-status" role="status"></div>`, { title: 'Foto piring' });
+
+  let stream = null;
+  let currentFacing = 'environment';
+  let stopped = false;
+
+  modalCleanup = () => {
+    stopped = true;
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
   };
+
+  const startCamera = async (facing = 'environment') => {
+    const video = document.querySelector('#plate-video');
+    const status = document.querySelector('#plate-camera-status');
+    const switchBtn = document.querySelector('#switch-camera-btn');
+    if (!video || stopped) return;
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      if (status) status.innerHTML = 'Kamera tidak didukung di peramban ini. Pilih foto dari galeri.';
+      return;
+    }
+    try {
+      if (status) status.style.display = 'flex';
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facing }, width: { ideal: 1280 } },
+        audio: false,
+      });
+      if (stopped) { stream.getTracks().forEach(t => t.stop()); return; }
+      video.srcObject = stream;
+      await video.play();
+      currentFacing = facing;
+      if (status) status.style.display = 'none';
+      if (switchBtn) switchBtn.style.display = 'inline-flex';
+    } catch (err) {
+      if (status) status.innerHTML = 'Kamera tidak dapat diakses. Izinkan akses kamera atau pilih foto dari galeri.';
+    }
+  };
+
+  startCamera(currentFacing);
+
+  const switchBtn = document.querySelector('#switch-camera-btn');
+  if (switchBtn) {
+    switchBtn.onclick = () => {
+      startCamera(currentFacing === 'environment' ? 'user' : 'environment');
+    };
+  }
+
+  const snapBtn = document.querySelector('#snap-plate-photo');
+  if (snapBtn) {
+    snapBtn.onclick = async () => {
+      const video = document.querySelector('#plate-video');
+      if (!video || !video.videoWidth) {
+        toast('Tunggu kamera aktif terlebih dahulu atau pilih dari galeri.', 'error');
+        return;
+      }
+      snapBtn.disabled = true;
+      const canvas = document.createElement('canvas');
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      const factor = Math.min(1, 1024 / Math.max(w, h));
+      canvas.width = Math.round(w * factor);
+      canvas.height = Math.round(h * factor);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+
+      canvas.toBlob(async blob => {
+        const previewURL = URL.createObjectURL(blob);
+        if (!session) {
+          foodModal('text', { name: 'Makanan dari foto', calories: 0 }, previewURL);
+          modalCleanup = () => URL.revokeObjectURL(previewURL);
+          return;
+        }
+        document.querySelector('#photo-status').innerHTML = `<p class="form-note"><span class="spin">${icon('loader-circle', '', 17)}</span> Menganalisis piringmu dengan Sakelar AI (gpt-6.1-terra)...</p>`;
+        hydrateIcons();
+        try {
+          const data = await api('food-estimate', { method: 'POST', body: { image: dataUrl } });
+          foodModal('text', data, previewURL);
+          modalCleanup = () => URL.revokeObjectURL(previewURL);
+        } catch (err) {
+          URL.revokeObjectURL(previewURL);
+          toast(err.message, 'error');
+          snapBtn.disabled = false;
+          startCamera(currentFacing);
+        }
+      }, 'image/jpeg', 0.85);
+    };
+  }
+
+  const fileInput = document.querySelector('#food-photo-fallback');
+  if (fileInput) {
+    fileInput.onchange = async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+        toast('Pilih gambar JPG, PNG, atau WebP maksimal 5 MB.', 'error');
+        return;
+      }
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+      const previewURL = URL.createObjectURL(file);
+      if (!session) {
+        foodModal('text', { name: 'Makanan dari foto', calories: 0 }, previewURL);
+        modalCleanup = () => URL.revokeObjectURL(previewURL);
+        return;
+      }
+      document.querySelector('#photo-status').innerHTML = `<p class="form-note"><span class="spin">${icon('loader-circle', '', 17)}</span> Menganalisis foto dengan Sakelar AI (gpt-6.1-terra)...</p>`;
+      hydrateIcons();
+      try {
+        const compressed = await compressImage(file);
+        const data = await api('food-estimate', { method: 'POST', body: { image: compressed } });
+        foodModal('text', data, previewURL);
+        modalCleanup = () => URL.revokeObjectURL(previewURL);
+      } catch (err) {
+        URL.revokeObjectURL(previewURL);
+        toast(err.message, 'error');
+        startCamera(currentFacing);
+      }
+    };
+  }
 }
+
 async function compressImage(file) {
   const bitmap = await createImageBitmap(file); const canvas = document.createElement('canvas'); const factor = Math.min(1, 768 / Math.max(bitmap.width, bitmap.height));
   canvas.width = bitmap.width * factor; canvas.height = bitmap.height * factor; canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
@@ -488,27 +638,125 @@ async function compressImage(file) {
 }
 
 function barcodeModal() {
-  openModal(`${modalHead('PINDAI BARCODE', 'Kenali yang ada di tanganmu.', 'Cari makanan kemasan atau produk dari kode barcode.')}<div class="scanner-box"><video id="scanner-video" autoplay muted playsinline hidden></video><div class="scanner-reticle">${icon('scan-barcode', '', 62)}</div><p id="scanner-status">Gunakan kamera atau ketik kode secara manual.</p></div><button class="button secondary full" id="start-scan">${icon('camera', '', 18)} Aktifkan kamera</button><form id="barcode-form">${field('Nomor barcode', input('barcode', '', 'inputmode="numeric" pattern="[0-9]{8,14}" required placeholder="Ketik 8–14 digit barcode"'))}<button class="button full">Cari barcode ${icon('search', '', 17)}</button></form><div id="barcode-result" role="status"></div>`, { title: 'Pindai barcode' });
-  let stream, stopped = false, frame;
-  modalCleanup = () => { stopped = true; clearTimeout(frame); stream?.getTracks().forEach(t => t.stop()); };
+  openModal(`${modalHead('PINDAI BARCODE', 'Kenali yang ada di tanganmu.', 'Kamera live otomatis aktif. Arahkan tepat ke barcode kemasan makanan atau produk.')}
+<div class="scanner-box">
+  <video id="scanner-video" autoplay muted playsinline></video>
+  <div class="scanner-reticle">
+    <div class="scan-laser"></div>
+    ${icon('scan-barcode', '', 52)}
+  </div>
+  <div id="scanner-status" class="scanner-status-text">
+    <span class="spin">${icon('loader-circle', '', 15)}</span>
+    <span>Mengaktifkan kamera live...</span>
+  </div>
+</div>
+<form id="barcode-form">
+  ${field('Atau ketik nomor barcode', input('barcode', '', 'inputmode="numeric" pattern="[0-9]{8,14}" placeholder="Ketik 8–14 digit barcode"'))}
+  <button class="button secondary full">Cari Kode Manual ${icon('search', '', 16)}</button>
+</form>
+<div id="barcode-result" role="status"></div>`, { title: 'Pindai barcode' });
+
+  let stopped = false;
+  let controls = null;
+  let fallbackStream = null;
+  let animFrame = null;
+  const codeReader = new BrowserMultiFormatReader();
+
+  modalCleanup = () => {
+    stopped = true;
+    cancelAnimationFrame(animFrame);
+    try { controls?.stop(); } catch {}
+    try { fallbackStream?.getTracks().forEach(t => t.stop()); } catch {}
+  };
+
   const lookup = async code => {
-    const result = document.querySelector('#barcode-result'); if (!result) return;
+    const result = document.querySelector('#barcode-result');
+    if (!result) return;
     try {
-      if (!session) { result.innerHTML = '<div class="notice">Basis data barcode belum dihubungkan pada pratinjau. Gunakan Manual cari untuk mencatat makanan.</div><button class="button secondary full" data-action="food-search">Manual cari</button>'; return; }
+      result.innerHTML = `<p class="form-note"><span class="spin">${icon('loader-circle', '', 16)}</span> Mencari barcode ${esc(code)}...</p>`;
+      hydrateIcons();
+      if (!session) {
+        result.innerHTML = '<div class="notice">Basis data barcode belum dihubungkan pada pratinjau. Masuk ke akun untuk mencari barcode atau gunakan Manual cari.</div><button class="button secondary full" data-action="food-search">Manual cari</button>';
+        return;
+      }
       const data = await api(`barcode/${encodeURIComponent(code)}`);
-      if (data.type === 'product') productModal(data.item.id); else foodModal('search', data.item);
-    } catch (err) { result.textContent = err.message; }
+      if (data.type === 'product') productModal(data.item.id);
+      else foodModal('search', data.item);
+    } catch (err) {
+      result.innerHTML = `<div class="notice">${icon('info', '', 18)}${esc(err.message)}</div>`;
+      hydrateIcons();
+    }
   };
-  document.querySelector('#barcode-form').onsubmit = e => { e.preventDefault(); lookup(new FormData(e.target).get('barcode')); };
-  document.querySelector('#start-scan').onclick = async () => {
-    if (!('BarcodeDetector' in window) || !navigator.mediaDevices?.getUserMedia) { toast('Pemindaian otomatis belum didukung browser ini. Ketik nomor barcode.', 'error'); return; }
+
+  document.querySelector('#barcode-form').onsubmit = e => {
+    e.preventDefault();
+    const code = new FormData(e.target).get('barcode');
+    if (code && code.trim()) lookup(code.trim());
+  };
+
+  const startScanner = async () => {
+    const video = document.querySelector('#scanner-video');
+    const statusEl = document.querySelector('#scanner-status');
+    if (!video || stopped) return;
+
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-      const video = document.querySelector('#scanner-video'); if (!video) { stream.getTracks().forEach(t => t.stop()); return; } video.srcObject = stream; video.hidden = false; await video.play();
-      const detector = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'code_128'] });
-      const scan = async () => { if (stopped) return; try { const codes = await detector.detect(video); if (codes[0]) { modalCleanup(); await lookup(codes[0].rawValue); return; } } catch { /* Continue until user stops camera. */ } frame = setTimeout(scan, 400); }; scan();
-    } catch { toast('Kamera tidak dapat dibuka. Izinkan akses atau ketik kode manual.', 'error'); }
+      controls = await codeReader.decodeFromConstraints(
+        { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } } },
+        video,
+        async (result, err) => {
+          if (result && !stopped) {
+            const rawText = result.getText();
+            if (rawText && rawText.trim()) {
+              stopped = true;
+              try { controls?.stop(); } catch {}
+              if (navigator.vibrate) try { navigator.vibrate(100); } catch {}
+              if (statusEl) statusEl.innerHTML = `<span style="color:#68d391">${icon('check-circle', '', 16)} Barcode terdeteksi: ${esc(rawText)}</span>`;
+              hydrateIcons();
+              await lookup(rawText.trim());
+            }
+          }
+        }
+      );
+      if (statusEl) statusEl.textContent = 'Arahkan kamera ke barcode kemasan';
+    } catch (zxingErr) {
+      try {
+        fallbackStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
+        if (stopped) { fallbackStream.getTracks().forEach(t => t.stop()); return; }
+        video.srcObject = fallbackStream;
+        await video.play();
+        if ('BarcodeDetector' in window) {
+          const detector = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'code_128', 'qr_code'] });
+          const scanLoop = async () => {
+            if (stopped) return;
+            try {
+              const codes = await detector.detect(video);
+              if (codes[0]?.rawValue) {
+                stopped = true;
+                fallbackStream?.getTracks().forEach(t => t.stop());
+                if (navigator.vibrate) try { navigator.vibrate(100); } catch {}
+                if (statusEl) statusEl.innerHTML = `<span style="color:#68d391">${icon('check-circle', '', 16)} Barcode terdeteksi: ${esc(codes[0].rawValue)}</span>`;
+                hydrateIcons();
+                await lookup(codes[0].rawValue);
+                return;
+              }
+            } catch {}
+            animFrame = requestAnimationFrame(scanLoop);
+          };
+          scanLoop();
+          if (statusEl) statusEl.textContent = 'Arahkan kamera ke barcode';
+        } else {
+          if (statusEl) statusEl.textContent = 'Kamera aktif. Dekatkan barcode atau ketik nomor di bawah.';
+        }
+      } catch (mediaErr) {
+        if (statusEl) statusEl.innerHTML = 'Kamera tidak dapat diakses. Izinkan kamera di browser atau ketik nomor barcode di bawah.';
+      }
+    }
   };
+
+  startScanner();
 }
 
 function weightModal() {
