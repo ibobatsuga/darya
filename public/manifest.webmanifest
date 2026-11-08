@@ -1,0 +1,7 @@
+{
+  "id": "/", "name": "Daryapedia — Teman Sehatmu", "short_name": "Daryapedia",
+  "lang": "id", "start_url": "/", "scope": "/", "display": "standalone",
+  "background_color": "#f6f8fc", "theme_color": "#2463eb",
+  "description": "AI wellness companion untuk perjalanan sehatmu.",
+  "icons": [{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
