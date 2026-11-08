@@ -1,7 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url = import.meta.env.VITE_SUPABASE_URL;
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Kunci publishable Supabase bersifat publik (aman tampil di kode frontend,
+// sama seperti di CalorAI). Dipakai sebagai fallback supaya build apa pun
+// — termasuk auto-deploy Cloudflare tanpa env VITE — tetap terhubung.
+// Override via env build bila perlu: VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY.
+const FALLBACK_URL = 'https://yxydabqmsjijgnrymkle.supabase.co';
+const FALLBACK_KEY = 'sb_publishable_jXjCgAT5zqBtbr3pA3qNOQ_YBpo4gh6';
+const url = import.meta.env.VITE_SUPABASE_URL || FALLBACK_URL;
+const key = import.meta.env.VITE_SUPABASE_ANON_KEY || FALLBACK_KEY;
 export const supabase = url && key ? createClient(url, key) : null;
 export let session = null;
 export async function initializeAuth(onChange) {
