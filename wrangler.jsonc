@@ -5,5 +5,12 @@
   "compatibility_date": "2026-11-01",
   "assets": { "directory": "./dist", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
   "ai": { "binding": "AI" },
-  "vars": { "DAILY_CONSULTATION_LIMIT": "10", "AI_PROVIDER": "sakelar", "AI_BASE_URL": "https://api.sakelar.web.id/v1", "AI_MODEL": "gpt-6.1-terra" }
+  "vars": {
+    "DAILY_CONSULTATION_LIMIT": "10",
+    "AI_PROVIDER": "sakelar",
+    "AI_BASE_URL": "https://api.sakelar.web.id/v1",
+    "AI_MODEL": "gpt-6.1-terra",
+    "SUPABASE_URL": "https://yxydabqmsjijgnrymkle.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_jXjCgAT5zqBtbr3pA3qNOQ_YBpo4gh6"
+  }
 }

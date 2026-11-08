@@ -8,7 +8,7 @@ import '@fontsource/plus-jakarta-sans/600.css';
 import '@fontsource/plus-jakarta-sans/700.css';
 import '@fontsource/plus-jakarta-sans/800.css';
 import { createIcons, icons } from 'lucide';
-import { previewProducts, previewArticles, foods, goals, previewFoodLogs } from './data.js';
+import { previewProducts, previewArticles, foods, goals, previewFoodLogs, exerciseOptions } from './data.js';
 import { bodyMetrics, validProfile, safetyCheck, lifestyleScore, sharePayload, escapeHTML as esc, DISCLAIMER, localDay } from './domain.js';
 import { api, supabase, session, initializeAuth, loadUserData, signIn, signUp, googleSignIn, resetPassword } from './api.js';
 
@@ -437,10 +437,10 @@ function weightModal() {
   document.querySelector('#weight-form').onsubmit = async e => { e.preventDefault(); const fd = new FormData(e.target), log = { weight: Number(fd.get('weight')), date: fd.get('date') }; try { const saved = session ? await api('logs/weight', { method: 'POST', body: log }) : { ...log, id: crypto.randomUUID() }; state.weights.push(saved); closeModal(); shell(); toast('Catatan berat ditambahkan.'); } catch (err) { toast(err.message, 'error'); } };
 }
 function exerciseModal() {
-  openModal(`${modalHead('EXERCISE', 'Setiap gerak berarti.', 'Pilih aktivitas yang membuatmu merasa lebih baik.')}<form id="exercise-form">${field('Aktivitas', select('activity', 'walking', [['walking', 'Jalan santai'], ['running', 'Lari ringan'], ['cycling', 'Bersepeda'], ['yoga', 'Yoga'], ['strength', 'Latihan kekuatan']]))}${field('Durasi (menit)', input('minutes', 30, 'type="number" min="1" max="600" required'))}<div class="notice">${icon('info', '', 18)}Energi yang digunakan merupakan estimasi berdasarkan durasi dan berat badan.</div><button class="button full">${icon('check', '', 18)} Catat aktivitasku</button></form>`, { title: 'Catat exercise' });
+  openModal(`${modalHead('EXERCISE', 'Setiap gerak berarti.', 'Pilih aktivitas yang membuatmu merasa lebih baik.')}<form id="exercise-form">${field('Aktivitas', select('activity', 'walking', exerciseOptions))}${field('Durasi (menit)', input('minutes', 30, 'type="number" min="1" max="600" required'))}<div class="notice">${icon('info', '', 18)}Energi yang digunakan merupakan estimasi berdasarkan durasi dan berat badan.</div><button class="button full">${icon('check', '', 18)} Catat aktivitasku</button></form>`, { title: 'Catat exercise' });
   document.querySelector('#exercise-form').onsubmit = async e => {
     e.preventDefault(); const fd = new FormData(e.target), activity = fd.get('activity'), minutes = Number(fd.get('minutes'));
-    const met = { walking: 3.5, running: 7, cycling: 6, yoga: 2.5, strength: 5 }[activity];
+    const met = { walking: 3.5, running: 7, cycling: 6, swimming: 6.5, yoga: 2.5, strength: 5, hiit: 8, pilates: 3.8, aerobics: 5.5, 'jump-rope': 9, badminton: 5.5 }[activity] || 4;
     const log = { activity, minutes, calories: Math.round(met * 3.5 * Number(state.profile?.weight || 65) / 200 * minutes), estimated: true };
     try { const saved = session ? await api('logs/exercise', { method: 'POST', body: log }) : { ...log, id: crypto.randomUUID() }; state.exercises.push(saved); closeModal(); shell(); toast(`${minutes} menit gerakmu tercatat. Bagus untuk konsistensimu!`); } catch (err) { toast(err.message, 'error'); }
   };

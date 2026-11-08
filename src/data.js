@@ -1,3 +1,5 @@
+import tkpiData from './data/tkpi_seed.json';
+
 export const goals = [
   { id: 'skin', name: 'Kulit & kecantikan', icon: 'sparkles' },
   { id: 'energy', name: 'Energi & fokus', icon: 'zap' },
@@ -29,14 +31,61 @@ export const previewArticles = [
     body: ['Kebiasaan duduk lama, kurang tidur, dan minuman manis patut diperhatikan pada berbagai usia. Mulailah dengan jeda bergerak dan memilih air putih lebih sering.', 'Pemeriksaan gula darah dan penilaian risiko dilakukan bersama tenaga kesehatan. Tidak ada suplemen yang ditawarkan di sini untuk mencegah atau mengobati diabetes.'] },
 ];
 
-export const foods = [
-  { id: 'rice', name: 'Nasi putih', portion: '1 porsi · 100 g', calories: 175, protein: 3.2, carbs: 40, fat: 0.3, icon: 'wheat' },
-  { id: 'chicken', name: 'Dada ayam panggang', portion: '1 potong · 100 g', calories: 165, protein: 31, carbs: 0, fat: 3.6, icon: 'drumstick' },
-  { id: 'egg', name: 'Telur rebus', portion: '1 butir · 50 g', calories: 78, protein: 6.3, carbs: 0.6, fat: 5.3, icon: 'egg' },
-  { id: 'banana', name: 'Pisang', portion: '1 buah · 100 g', calories: 89, protein: 1.1, carbs: 23, fat: 0.3, icon: 'banana' },
-  { id: 'salad', name: 'Salad sayur', portion: '1 mangkuk · 150 g', calories: 85, protein: 2.5, carbs: 12, fat: 3, icon: 'salad' },
-  { id: 'oats', name: 'Oatmeal', portion: '1 mangkuk · 40 g kering', calories: 150, protein: 5, carbs: 27, fat: 3, icon: 'soup' },
+const iconMap = {
+  Serealia: 'wheat',
+  Daging: 'drumstick',
+  Ikan: 'fish',
+  Telur: 'egg',
+  Buah: 'apple',
+  Sayur: 'salad',
+  Kacang: 'nut',
+  Susu: 'milk',
+  Lemak: 'flame',
+};
+
+// Database pangan Indonesia dari TKPI 2019 (Kemenkes RI) via darya-nutrition-db
+export const foods = (tkpiData.foods || []).map(f => ({
+  id: (f.code || f.name).toLowerCase().replace(/[^a-z0-9]/g, '-'),
+  code: f.code,
+  name: f.name,
+  portion: '1 porsi · 100 g',
+  calories: Math.round(Number(f.energy_kcal) || 0),
+  protein: Number(f.protein_g) || 0,
+  carbs: Number(f.carbs_g) || 0,
+  fat: Number(f.fat_g) || 0,
+  group: f.group,
+  aliases: f.aliases || [],
+  icon: iconMap[f.group] || 'utensils',
+}));
+
+export const exerciseOptions = [
+  ['walking', 'Jalan santai (Walking)'],
+  ['running', 'Lari / Jogging'],
+  ['cycling', 'Bersepeda (Cycling)'],
+  ['swimming', 'Berenang (Swimming)'],
+  ['yoga', 'Yoga & Stretching'],
+  ['strength', 'Latihan kekuatan / Gym'],
+  ['hiit', 'HIIT / Cardio interval'],
+  ['pilates', 'Pilates / Core training'],
+  ['aerobics', 'Senam aerobik'],
+  ['jump-rope', 'Lompat tali (Jump rope)'],
+  ['badminton', 'Bulu tangkis / Badminton'],
 ];
+
+export const exerciseBurnRates = {
+  walking: 4.5,
+  running: 10,
+  cycling: 8,
+  swimming: 9,
+  yoga: 3.5,
+  strength: 6,
+  hiit: 11,
+  pilates: 5,
+  aerobics: 6.5,
+  'jump-rope': 12,
+  badminton: 7,
+};
+
 export const previewFoodLogs = [
   { id: 'example-1', name: 'Oatmeal, pisang & susu', meal: 'Sarapan', calories: 380, protein: 15, carbs: 58, fat: 10, time: '07.30', icon: 'soup', example: true },
   { id: 'example-2', name: 'Nasi, ayam & sayuran', meal: 'Makan siang', calories: 620, protein: 35, carbs: 78, fat: 18, time: '12.15', icon: 'salad', example: true },
