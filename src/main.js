@@ -53,7 +53,7 @@ const titles = { home: 'Beranda', assistant: 'Darya AI', nutrition: 'Catat Gizi'
 
 function shell() {
   app.innerHTML = `<aside class="sidebar">
-    <a href="#home" class="brand" aria-label="Daryapedia beranda"><span class="brand-mark">${icon('plus', '', 26)}</span><span>daryapedia<span class="brand-dot">.</span></span></a>
+    <a href="#home" class="brand" aria-label="Daryapedia beranda"><img class="brand-logo" src="/logo-daryapedia.svg" alt="Daryapedia"><span>daryapedia<span class="brand-dot">.</span></span></a>
     <div class="sidebar-caption">YOUR WELLNESS SPACE</div>
     <nav aria-label="Navigasi utama">${navItems.map(([id, i, label]) => `<a href="#${id}" class="nav-item ${state.route === id ? 'active' : ''}" ${state.route === id ? 'aria-current="page"' : ''}>${icon(i)}<span>${label}</span>${id === 'assistant' ? '<span class="ai-badge">AI</span>' : ''}${state.route === id ? '<span class="nav-dot"></span>' : ''}</a>`).join('')}</nav>
     <div class="nav-divider"></div><div class="sidebar-caption">PERSONAL</div>
@@ -61,7 +61,7 @@ function shell() {
     <div class="sidebar-bottom"><div class="companion-card"><span class="mini-orb">${icon('sparkles', '', 20)}</span><h3>Langkah kecil.<br>Dampak besar.</h3><p>Teman sehatmu, setiap hari.</p><button class="button compact" data-go="assistant">Sapa Darya AI ${icon('arrow-up-right', '', 15)}</button></div>
     <button class="sidebar-user" data-go="profile"><span class="avatar">${esc(name().slice(0, 1))}</span><span><strong>${session ? esc(name()) : 'Halo, Sahabat'}</strong><small>${session ? 'Perjalanan sehatmu' : 'Jelajahi Daryapedia'}</small></span>${icon('chevrons-up-down', '', 16)}</button></div>
   </aside>
-  <div class="workspace"><header class="topbar"><div class="breadcrumb"><span class="mobile-brand"><span class="brand-mark small">${icon('plus', '', 18)}</span>daryapedia<span class="brand-dot">.</span></span><span class="desktop-breadcrumb">Wellness space ${icon('chevron-right', '', 13)}<strong>${titles[state.route] || 'Beranda'}</strong></span></div>
+  <div class="workspace"><header class="topbar"><div class="breadcrumb"><span class="mobile-brand"><img class="brand-logo small" src="/logo-daryapedia.svg" alt="Daryapedia">daryapedia<span class="brand-dot">.</span></span><span class="desktop-breadcrumb">Wellness space ${icon('chevron-right', '', 13)}<strong>${titles[state.route] || 'Beranda'}</strong></span></div>
     <div class="top-actions"><label class="global-search">${icon('search', '', 17)}<input id="global-search" type="search" placeholder="Cari sesuatu untuk sehatmu..." aria-label="Cari produk"/><span>⌘ K</span></label>${isPreview() ? '<span class="preview-pill"><span></span>Pratinjau</span>' : '<span class="connected-pill">Terhubung</span>'}
     <button class="icon-button theme-toggle" data-action="theme" aria-label="${state.theme === 'light' ? 'Aktifkan tema gelap' : 'Aktifkan tema terang'}">${icon(state.theme === 'light' ? 'moon' : 'sun', '', 19)}</button><button class="icon-button notification-button" data-action="notifications" aria-label="Notifikasi">${icon('bell', '', 19)}${!state.notificationsRead ? '<b></b>' : ''}</button><button class="avatar avatar-small" data-go="profile" aria-label="Buka profil">${esc(name().slice(0, 1))}</button></div>
   </header><main id="main-content" tabindex="-1">${renderPage()}</main><footer class="page-footer"><span>© ${new Date().getFullYear()} Daryapedia</span><span>${icon('heart', '', 12)} Teman perjalanan sehatmu</span><button data-action="privacy">Privasi & keamanan</button></footer></div>
