@@ -18,10 +18,11 @@ export async function initializeAuth(onChange) {
   supabase.auth.onAuthStateChange((_event, value) => { session = value; onChange(value); });
 }
 export async function api(path, { method = 'GET', body } = {}) {
-  if (!session) throw new Error('Masuk terlebih dahulu untuk menyimpan data dan menggunakan AI.');
+  const headers = { 'Content-Type': 'application/json' };
+  if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
   const response = await fetch(`/api/${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+    headers,
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const data = await response.json().catch(() => ({}));

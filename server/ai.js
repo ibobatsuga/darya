@@ -7,7 +7,7 @@ export async function sakelarCompletion(env, messages, maxTokens = 400, fetcher 
   const response = await fetcher(`${base.href.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST', headers: { Authorization: `Bearer ${env.SAKELAR_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: env.AI_MODEL || 'gpt-6.1-terra', messages, max_tokens: maxTokens, temperature: 0.7, stream: false }),
-    signal: AbortSignal.timeout(45000), redirect: 'error',
+    signal: AbortSignal.timeout(45000), redirect: 'manual',
   });
   if (!response.ok) throw new Error(`AI_HTTP_${response.status}`);
   const data = await response.json();

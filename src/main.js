@@ -575,11 +575,6 @@ function photoModal() {
 
       canvas.toBlob(async blob => {
         const previewURL = URL.createObjectURL(blob);
-        if (!session) {
-          foodModal('text', { name: 'Makanan dari foto', calories: 0 }, previewURL);
-          modalCleanup = () => URL.revokeObjectURL(previewURL);
-          return;
-        }
         document.querySelector('#photo-status').innerHTML = `<p class="form-note"><span class="spin">${icon('loader-circle', '', 17)}</span> Menganalisis piringmu dengan Sakelar AI (gpt-6.1-terra)...</p>`;
         hydrateIcons();
         try {
@@ -610,11 +605,6 @@ function photoModal() {
         stream = null;
       }
       const previewURL = URL.createObjectURL(file);
-      if (!session) {
-        foodModal('text', { name: 'Makanan dari foto', calories: 0 }, previewURL);
-        modalCleanup = () => URL.revokeObjectURL(previewURL);
-        return;
-      }
       document.querySelector('#photo-status').innerHTML = `<p class="form-note"><span class="spin">${icon('loader-circle', '', 17)}</span> Menganalisis foto dengan Sakelar AI (gpt-6.1-terra)...</p>`;
       hydrateIcons();
       try {
@@ -638,7 +628,7 @@ async function compressImage(file) {
 }
 
 function barcodeModal() {
-  openModal(`${modalHead('PINDAI BARCODE', 'Kenali yang ada di tanganmu.', 'Kamera live otomatis aktif. Arahkan tepat ke barcode kemasan makanan atau produk.')}
+  openModal(`${modalHead('PINDAI ATAU FOTO BARCODE', 'Kenali yang ada di tanganmu.', 'Kamera live otomatis aktif. Dekatkan barcode atau tekan Foto Barcode untuk pencarian database otomatis.')}
 <div class="scanner-box">
   <video id="scanner-video" autoplay muted playsinline></video>
   <div class="scanner-reticle">
@@ -650,9 +640,18 @@ function barcodeModal() {
     <span>Mengaktifkan kamera live...</span>
   </div>
 </div>
+<div class="camera-actions" style="margin: 12px 0 16px;">
+  <button class="button full" id="snap-barcode-photo" type="button">
+    ${icon('camera', '', 18)} Foto Barcode / Kemasan
+  </button>
+  <label class="button secondary full file-fallback-btn" for="barcode-photo-fallback">
+    ${icon('image', '', 16)} Unggah Foto Barcode dari Galeri
+    <input id="barcode-photo-fallback" type="file" accept="image/jpeg,image/png,image/webp" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;" />
+  </label>
+</div>
 <form id="barcode-form">
-  ${field('Atau ketik nomor barcode', input('barcode', '', 'inputmode="numeric" pattern="[0-9]{8,14}" placeholder="Ketik 8–14 digit barcode"'))}
-  <button class="button secondary full">Cari Kode Manual ${icon('search', '', 16)}</button>
+  ${field('Atau ketik nomor barcode manual', input('barcode', '', 'inputmode="numeric" pattern="[0-9]{8,14}" placeholder="Ketik 8–14 digit barcode"'))}
+  <button class="button secondary full">Cari Barcode di Database ${icon('search', '', 16)}</button>
 </form>
 <div id="barcode-result" role="status"></div>`, { title: 'Pindai barcode' });
 
@@ -673,13 +672,10 @@ function barcodeModal() {
     const result = document.querySelector('#barcode-result');
     if (!result) return;
     try {
-      result.innerHTML = `<p class="form-note"><span class="spin">${icon('loader-circle', '', 16)}</span> Mencari barcode ${esc(code)}...</p>`;
+      result.innerHTML = `<p class="form-note"><span class="spin">${icon('loader-circle', '', 16)}</span> Mencari barcode ${esc(code)} di database...</p>`;
       hydrateIcons();
-      if (!session) {
-        result.innerHTML = '<div class="notice">Basis data barcode belum dihubungkan pada pratinjau. Masuk ke akun untuk mencari barcode atau gunakan Manual cari.</div><button class="button secondary full" data-action="food-search">Manual cari</button>';
-        return;
-      }
       const data = await api(`barcode/${encodeURIComponent(code)}`);
+      modalCleanup();
       if (data.type === 'product') productModal(data.item.id);
       else foodModal('search', data.item);
     } catch (err) {
@@ -687,6 +683,63 @@ function barcodeModal() {
       hydrateIcons();
     }
   };
+
+  const scanPhoto = async dataUrl => {
+    const result = document.querySelector('#barcode-result');
+    const statusEl = document.querySelector('#scanner-status');
+    if (statusEl) statusEl.innerHTML = `<span class="spin">${icon('loader-circle', '', 15)}</span> Membaca barcode & mencari di database...`;
+    if (result) {
+      result.innerHTML = `<p class="form-note"><span class="spin">${icon('loader-circle', '', 16)}</span> Membaca foto kemasan/barcode dan mencari di database...</p>`;
+      hydrateIcons();
+    }
+    try {
+      const data = await api('barcode-scan', { method: 'POST', body: { image: dataUrl } });
+      modalCleanup();
+      if (data.type === 'product') productModal(data.item.id);
+      else foodModal('search', data.item);
+    } catch (err) {
+      if (result) {
+        result.innerHTML = `<div class="notice">${icon('info', '', 18)}${esc(err.message)}</div>`;
+        hydrateIcons();
+      }
+      if (statusEl) statusEl.textContent = 'Arahkan kamera ke barcode kemasan';
+    }
+  };
+
+  const snapBarcodeBtn = document.querySelector('#snap-barcode-photo');
+  if (snapBarcodeBtn) {
+    snapBarcodeBtn.onclick = () => {
+      const video = document.querySelector('#scanner-video');
+      if (!video || !video.videoWidth) {
+        toast('Tunggu kamera aktif terlebih dahulu atau unggah dari galeri.', 'error');
+        return;
+      }
+      const canvas = document.createElement('canvas');
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      const factor = Math.min(1, 1024 / Math.max(w, h));
+      canvas.width = Math.round(w * factor);
+      canvas.height = Math.round(h * factor);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      scanPhoto(dataUrl);
+    };
+  }
+
+  const barcodeFileFallback = document.querySelector('#barcode-photo-fallback');
+  if (barcodeFileFallback) {
+    barcodeFileFallback.onchange = async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+        toast('Pilih gambar JPG, PNG, atau WebP maksimal 5 MB.', 'error');
+        return;
+      }
+      const dataUrl = await compressImage(file);
+      scanPhoto(dataUrl);
+    };
+  }
 
   document.querySelector('#barcode-form').onsubmit = e => {
     e.preventDefault();
@@ -748,7 +801,7 @@ function barcodeModal() {
           scanLoop();
           if (statusEl) statusEl.textContent = 'Arahkan kamera ke barcode';
         } else {
-          if (statusEl) statusEl.textContent = 'Kamera aktif. Dekatkan barcode atau ketik nomor di bawah.';
+          if (statusEl) statusEl.textContent = 'Kamera aktif. Arahkan barcode atau tekan Foto Barcode.';
         }
       } catch (mediaErr) {
         if (statusEl) statusEl.innerHTML = 'Kamera tidak dapat diakses. Izinkan kamera di browser atau ketik nomor barcode di bawah.';
